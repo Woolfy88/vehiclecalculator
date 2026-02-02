@@ -1,5 +1,5 @@
 # app.py
-# Streamlit wagon fill calculator (ONLINE CALCULATOR ONLY)
+# Streamlit wagon fill calculator (ONLINE CALCULATOR ONLY) + Wagon Fill Visual (Altair)
 #
 # CURRENT RULES (as agreed):
 # - 1 stillage holds MAX 14 doors
@@ -7,8 +7,8 @@
 # - 1 stillage = 2.25 large pallets
 #   => 1 large pallet = 1/2.25 = 0.444... stillage spaces
 #
-# This version REMOVES all Excel/.xlsm picker import logic.
-# You enter door quantity and large pallet quantity directly in the app.
+# This version has NO Excel import.
+# It includes a live “wagon getting fuller” visual using an Altair slot grid.
 
 import math
 
@@ -22,7 +22,7 @@ import altair as alt
 # -----------------------
 DOORS_PER_STILLAGE_DEFAULT = 14
 STILLAGE_TO_LARGE_PALLET = 2.25
-LARGE_PALLET_TO_STILLAGE = 1 / STILLAGE_TO_LARGE_PALLET  # ~0.4444
+LARGE_PALLET_TO_STILLAGE = 1 / STILLAGE_TO_LARGE_PALLET  # ~0.4444 stillage spaces per large pallet
 
 
 # -----------------------
@@ -42,6 +42,37 @@ def traffic_label(util: float) -> str:
     return "🔴 Over"
 
 
+def make_slot_grid(total_slots: int, used_slots: float, cols: int = 13) -> pd.DataFrame:
+    """
+    Builds a grid where each cell represents one LARGE pallet slot.
+    status = 'full', 'partial', or 'empty'
+    """
+    total_slots = int(max(total_slots, 0))
+    used_slots = max(float(used_slots), 0.0)
+
+    if cols <= 0:
+        cols = 13
+
+    data = []
+    remaining = used_slots
+
+    for i in range(total_slots):
+        if remaining >= 1.0:
+            status = "full"
+            remaining -= 1.0
+        elif 0.0 < remaining < 1.0:
+            status = "partial"
+            remaining = 0.0
+        else:
+            status = "empty"
+
+        r = i // cols
+        c = i % cols
+        data.append({"r": r, "c": c, "status": status})
+
+    return pd.DataFrame(data)
+
+
 # -----------------------
 # STREAMLIT UI
 # -----------------------
@@ -55,13 +86,13 @@ st.caption(
 
 # -----------------------
 # VEHICLE RULES (EDIT THESE)
-# IMPORTANT: pallet_cap now refers to LARGE PALLET (2.8m) capacity per vehicle
+# IMPORTANT: pallet_cap refers to LARGE PALLET (2.8m) capacity per vehicle
 # stillage_cap = pallet_cap * (1/2.25)
 # -----------------------
 st.subheader("Vehicle definitions")
 
 st.info(
-    "Edit the vehicle table below so pallet_cap matches your **2.8m large pallet** capacity. "
+    "Edit the vehicle table so pallet_cap matches your **2.8m large pallet** capacity. "
     "Cube (m³) and payload (kg) should be your operational limits."
 )
 
@@ -81,6 +112,11 @@ vehicles = st.data_editor(
     use_container_width=True,
     hide_index=True
 ).copy()
+
+# Ensure numeric
+for col in ["pallet_cap", "cube_cap_m3", "payload_kg"]:
+    if col in vehicles.columns:
+        vehicles[col] = pd.to_numeric(vehicles[col], errors="coerce").fillna(0)
 
 # Compute stillage capacity from large pallet capacity
 vehicles["stillage_cap"] = vehicles["pallet_cap"].astype(float) * LARGE_PALLET_TO_STILLAGE
@@ -122,7 +158,6 @@ with col3:
 # -----------------------
 # BUILD ORDER LINES
 # -----------------------
-# Doors -> stillages
 door_stillages = int(math.ceil(float(door_qty) / float(doors_per_stillage))) if doors_per_stillage > 0 else 0
 
 lines = pd.DataFrame(
@@ -175,7 +210,7 @@ limiting = max(utils, key=utils.get)
 overall = max(utils.values())
 
 # -----------------------
-# OUTPUTS / VISUALS
+# VISUALS: % UTILISATION
 # -----------------------
 st.subheader("Load utilisation")
 
@@ -202,17 +237,58 @@ with c4:
     st.progress(min(weight_util, 1.0))
     st.caption(f"{total_weight:.0f} / {payload_cap:.0f} kg ({weight_util*100:.0f}%)")
 
-# Donut chart
+# Donut chart comparing constraints
 chart_df = pd.DataFrame({"Constraint": list(utils.keys()), "Percent": [min(v * 100, 200) for v in utils.values()]})
 donut = (
     alt.Chart(chart_df)
     .mark_arc(innerRadius=55)
-    .encode(theta=alt.Theta(field="Percent", type="quantitative"), tooltip=["Constraint", "Percent"])
+    .encode(
+        theta=alt.Theta(field="Percent", type="quantitative"),
+        tooltip=["Constraint", "Percent"]
+    )
     .properties(height=230)
 )
 st.altair_chart(donut, use_container_width=True)
 
-# Details
+# -----------------------
+# VISUAL: WAGON GETTING FULLER (SLOT GRID)
+# -----------------------
+st.subheader("Wagon fill visual (large pallet slots)")
+
+total_slots = int(float(veh["pallet_cap"]))  # vehicle capacity in LARGE pallet slots
+used_slots = (door_stillages * STILLAGE_TO_LARGE_PALLET) + float(large_pallet_qty)
+
+# Pick a grid width that looks good for typical UK vehicles (26-ish max)
+cols = 13 if total_slots >= 13 else max(1, total_slots)
+
+st.caption(
+    f"Used slots = (door stillages × 2.25) + large pallets = "
+    f"({door_stillages} × 2.25) + {float(large_pallet_qty):.0f} = {used_slots:.2f} / {total_slots}"
+)
+
+grid_df = make_slot_grid(total_slots=total_slots, used_slots=used_slots, cols=cols)
+
+slot_chart = (
+    alt.Chart(grid_df)
+    .mark_rect()
+    .encode(
+        x=alt.X("c:O", title=None, axis=alt.Axis(labels=False, ticks=False)),
+        y=alt.Y("r:O", title=None, axis=alt.Axis(labels=False, ticks=False), sort="ascending"),
+        color=alt.Color(
+            "status:N",
+            legend=alt.Legend(title="Slot status"),
+            scale=alt.Scale(domain=["full", "partial", "empty"], range=["#1f77b4", "#ff7f0e", "#e0e0e0"]),
+        ),
+        tooltip=["status:N"]
+    )
+    .properties(height=220)
+)
+
+st.altair_chart(slot_chart, use_container_width=True)
+
+# -----------------------
+# DETAILS
+# -----------------------
 st.subheader("Converted load details")
 st.dataframe(
     lines[
@@ -255,6 +331,6 @@ st.write(
 )
 
 st.info(
-    "This version is an online calculator only (no Excel import). "
-    "To deploy on Streamlit Cloud, save as app.py and add requirements.txt with: streamlit, pandas, altair."
+    "Tip: This grid is a capacity visual (slots filling up), not a true packing optimiser. "
+    "It is based on your equivalence rule: 1 stillage = 2.25 large pallets."
 )
