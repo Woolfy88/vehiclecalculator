@@ -356,16 +356,6 @@ with c4:
     st.progress(min(weight_util, 1.0))
     st.caption(f"{total_weight:.0f} / {payload_cap:.0f} kg ({weight_util*100:.0f}%)")
 
-# Simple bar chart (Streamlit native)
-st.subheader("Constraint comparison (visual)")
-chart_df = pd.DataFrame(
-    {
-        "Constraint": list(utils.keys()),
-        "Utilisation_%": [round(v * 100, 1) for v in utils.values()],
-    }
-).set_index("Constraint")
-st.bar_chart(chart_df, height=220)
-
 # -----------------------
 # WAGON FLOOR FILL VISUAL
 # -----------------------
