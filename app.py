@@ -228,31 +228,17 @@ st.dataframe(
     ],
     use_container_width=True,
 )
+# --- INTERNAL CALCULATIONS (hidden from UI) ---
 
-st.subheader("Remaining capacity (negative = overloaded)")
 rem_stillage = stillage_cap - total_stillage
 rem_cube = cube_cap - total_cube
 rem_weight = payload_cap - total_weight
-st.write(
-    {
-        "stillage spaces remaining": round(rem_stillage, 2),
-        "m3 remaining": round(rem_cube, 1),
-        "kg remaining": round(rem_weight, 0),
-    }
-)
 
-st.subheader("Estimated wagons needed (simple, constraint-based)")
 wagons_by_space = ceil_div(total_stillage, stillage_cap)
 wagons_by_cube = ceil_div(total_cube, cube_cap)
 wagons_by_weight = ceil_div(total_weight, payload_cap)
-st.write(
-    {
-        "by floor space (stillage)": wagons_by_space,
-        "by cube": wagons_by_cube,
-        "by weight": wagons_by_weight,
-        "required (max)": max(wagons_by_space, wagons_by_cube, wagons_by_weight),
-    }
-)
+required_wagons = max(wagons_by_space, wagons_by_cube, wagons_by_weight)
+
 
 st.info(
     "This version is an online calculator only (no Excel import). "
