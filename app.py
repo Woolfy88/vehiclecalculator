@@ -2,17 +2,18 @@
 # Streamlit wagon fill calculator (ONLINE CALCULATOR ONLY)
 #
 # CURRENT RULES (as agreed):
-# - 1 stillage holds MAX 14 doors
+# - 1 stillage holds MAX 14 doors (FIXED, hidden from UI)
 # - Only LARGE pallets (2.8m)
 # - 1 stillage = 2.25 large pallets
 #   => 1 large pallet = 1/2.25 = 0.444... stillage spaces
 #
 # This version:
 # - Removes ALL Excel/.xlsm import logic
-# - Removes vehicle definitions table (fixed vehicles)
-# - Moves vehicle selection to the very top
+# - Fixed vehicles (no vehicle table UI)
+# - Vehicle selection at top
 # - Removes constraint comparison chart
-# - Removes "Assumptions for weight & cube" input section from the UI
+# - Removes "Assumptions for weight & cube" inputs (hard-coded)
+# - Removes "Doors per stillage" input (fixed at 14, hidden)
 # - Includes a Goodloading-style wagon floor fill visual using Streamlit + HTML/CSS only
 
 import math
@@ -24,11 +25,11 @@ import streamlit as st
 # -----------------------
 # CONFIG / CONSTANTS
 # -----------------------
-DOORS_PER_STILLAGE_DEFAULT = 14
+DOORS_PER_STILLAGE = 14  # FIXED (hidden from UI)
 STILLAGE_TO_LARGE_PALLET = 2.25
 LARGE_PALLET_TO_STILLAGE = 1 / STILLAGE_TO_LARGE_PALLET  # ~0.4444
 
-# Fixed assumptions (previous UI inputs are now hard-coded)
+# Fixed assumptions (hidden from UI)
 DOOR_STILLAGE_WEIGHT_KG = 250.0
 DOOR_STILLAGE_CUBE_M3 = 1.6
 LARGE_PALLET_WEIGHT_KG = 600.0
@@ -218,7 +219,6 @@ st.subheader("Load inputs")
 col1, col2 = st.columns([1, 1])
 
 with col1:
-    doors_per_stillage = st.number_input("Doors per stillage", min_value=1, value=DOORS_PER_STILLAGE_DEFAULT, step=1)
     door_qty = st.number_input("Door quantity", min_value=0.0, value=0.0, step=1.0)
     doors_upright_required = st.checkbox("Doors require upright stillages", value=True)
 
@@ -228,7 +228,7 @@ with col2:
 # -----------------------
 # BUILD ORDER LINES
 # -----------------------
-door_stillages = int(math.ceil(float(door_qty) / float(doors_per_stillage))) if doors_per_stillage > 0 else 0
+door_stillages = int(math.ceil(float(door_qty) / float(DOORS_PER_STILLAGE))) if DOORS_PER_STILLAGE > 0 else 0
 
 lines = pd.DataFrame(
     [
