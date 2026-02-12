@@ -1,6 +1,6 @@
 # app.py
 # Streamlit "Wagon / Stillage" calculator with Altair fill visualisation
-# - No file picker (online calculator only)
+# - Online calculator only (no file picker)
 # - Doors pack into stillages (max 14 doors per stillage)
 # - 1 stillage = 2.25 large pallets
 # - Wagon capacity expressed in "large pallets" (2.8m pallets)
@@ -62,55 +62,50 @@ def calculate(doors: int, wagon_capacity_pallets: float) -> CalcResult:
 
 
 # -----------------------------
-# Altair visualisations
+# Altair visualisations (Schema-safe)
 # -----------------------------
 def fill_bar_chart(result: CalcResult) -> alt.Chart:
     """Single horizontal bar split into Used / Remaining (or Over capacity)."""
-    cap = result.wagon_capacity_pallets
-    used = result.pallets_used
+    cap = float(result.wagon_capacity_pallets)
+    used = float(result.pallets_used)
 
     if cap <= 0:
-        df = pd.DataFrame(
-            [
-                {"part": "Used", "value": used, "note": "Set a wagon capacity to see utilisation."},
-            ]
-        )
+        df = pd.DataFrame([{"row": "Wagon", "part": "Used", "value": used}])
         return (
             alt.Chart(df)
             .mark_bar()
             .encode(
                 x=alt.X("value:Q", title="Large pallets equivalent"),
-                y=alt.Y("part:N", title=None),
-                tooltip=["part:N", alt.Tooltip("value:Q", format=".2f"), "note:N"],
+                y=alt.Y("row:N", title=None, axis=None),
+                color=alt.Color("part:N", legend=alt.Legend(title=None, orient="bottom")),
+                tooltip=["part:N", alt.Tooltip("value:Q", format=".2f")],
             )
-            .properties(height=70)
+            .properties(height=60)
         )
 
     if used <= cap:
         df = pd.DataFrame(
             [
-                {"part": "Used", "value": used},
-                {"part": "Remaining", "value": cap - used},
+                {"row": "Wagon", "part": "Used", "value": used},
+                {"row": "Wagon", "part": "Remaining", "value": cap - used},
             ]
         )
         domain = ["Used", "Remaining"]
     else:
-        # Over capacity: show capacity as "Capacity" plus "Over"
         df = pd.DataFrame(
             [
-                {"part": "Capacity", "value": cap},
-                {"part": "Over", "value": used - cap},
+                {"row": "Wagon", "part": "Capacity", "value": cap},
+                {"row": "Wagon", "part": "Over", "value": used - cap},
             ]
         )
         domain = ["Capacity", "Over"]
 
-    # Stacked horizontal bar
     return (
         alt.Chart(df)
         .mark_bar()
         .encode(
             x=alt.X("value:Q", stack="zero", title="Large pallets equivalent"),
-            y=alt.Y(alt.value(0), axis=None),
+            y=alt.Y("row:N", title=None, axis=None),
             color=alt.Color(
                 "part:N",
                 scale=alt.Scale(domain=domain),
@@ -118,18 +113,18 @@ def fill_bar_chart(result: CalcResult) -> alt.Chart:
             ),
             tooltip=["part:N", alt.Tooltip("value:Q", format=".2f")],
         )
-        .properties(height=55)
+        .properties(height=60)
     )
 
 
 def gauge_chart(result: CalcResult) -> alt.Chart:
-    """Compact 'utilisation gauge' from 0 to 100% (clamped) with a marker for actual % (can exceed 100)."""
-    pct = result.load_pct
-    clamped = min(max(pct, 0.0), 100.0)
+    """0–100% utilisation gauge (marker clamped); KPI can show >100%."""
+    pct = float(result.load_pct)
+    clamped = max(0.0, min(pct, 100.0))
 
-    base = pd.DataFrame([{"label": "Utilisation", "start": 0, "end": 100}])
-    fill = pd.DataFrame([{"label": "Utilisation", "start": 0, "end": clamped}])
-    marker = pd.DataFrame([{"label": "Utilisation", "pct": clamped}])
+    base = pd.DataFrame([{"row": "Utilisation", "start": 0.0, "end": 100.0}])
+    fill = pd.DataFrame([{"row": "Utilisation", "start": 0.0, "end": clamped}])
+    marker = pd.DataFrame([{"row": "Utilisation", "pct": clamped}])
 
     bar_bg = (
         alt.Chart(base)
@@ -137,8 +132,8 @@ def gauge_chart(result: CalcResult) -> alt.Chart:
         .encode(
             x=alt.X("start:Q", title=None, scale=alt.Scale(domain=[0, 100])),
             x2="end:Q",
-            y=alt.Y("label:N", title=None),
-            tooltip=[alt.value("0–100% scale")],
+            y=alt.Y("row:N", title=None, axis=None),
+            tooltip=[alt.value("Scale: 0–100%")],
         )
     )
 
@@ -148,7 +143,7 @@ def gauge_chart(result: CalcResult) -> alt.Chart:
         .encode(
             x="start:Q",
             x2="end:Q",
-            y="label:N",
+            y=alt.Y("row:N", axis=None),
             tooltip=[alt.Tooltip("end:Q", title="Utilisation (clamped)", format=".1f")],
         )
     )
@@ -157,16 +152,10 @@ def gauge_chart(result: CalcResult) -> alt.Chart:
         alt.Chart(marker)
         .mark_rule()
         .encode(
-            x=alt.X("pct:Q"),
-            y="label:N",
+            x="pct:Q",
+            y=alt.Y("row:N", axis=None),
             tooltip=[alt.Tooltip("pct:Q", title="Marker (clamped)", format=".1f")],
         )
-    )
-
-    text = (
-        alt.Chart(pd.DataFrame([{"text": f"{pct:.1f}%"}]))
-        .mark_text(align="left", dx=6)
-        .encode(x=alt.value(0), y=alt.value(0), text="text:N")
     )
 
     return (
@@ -211,9 +200,17 @@ k3.metric("Large pallets used", f"{result.pallets_used:.2f}")
 
 if result.wagon_capacity_pallets > 0:
     if result.pallets_used <= result.wagon_capacity_pallets:
-        k4.metric("Capacity remaining", f"{result.pallets_remaining:.2f}", delta=f"{100 - result.load_pct:.1f}% free")
+        k4.metric(
+            "Capacity remaining",
+            f"{result.pallets_remaining:.2f}",
+            delta=f"{100 - result.load_pct:.1f}% free",
+        )
     else:
-        k4.metric("Over capacity", f"{abs(result.pallets_remaining):.2f}", delta=f"{result.load_pct - 100:.1f}% over")
+        k4.metric(
+            "Over capacity",
+            f"{abs(result.pallets_remaining):.2f}",
+            delta=f"{result.load_pct - 100:.1f}% over",
+        )
 else:
     k4.metric("Capacity remaining", "—")
 
@@ -228,7 +225,7 @@ with c1:
 with c2:
     st.subheader("Utilisation")
     st.altair_chart(gauge_chart(result), use_container_width=True)
-    st.caption("Gauge clamps at 100% but the KPI shows true % (can exceed 100%).")
+    st.caption("Gauge marker clamps at 100%, but the KPI shows true utilisation (can exceed 100%).")
 
 # Explanation / output breakdown
 st.subheader("Breakdown")
@@ -267,7 +264,7 @@ if show_debug:
                 "load_pct": result.load_pct,
                 "notes": [
                     "Doors pack into stillages up to 14 each (ceil).",
-                    "No standard pallets: everything expressed in large-pallet equivalents.",
+                    "Everything is expressed in large-pallet equivalents (no standard pallets).",
                 ],
             }
         )
