@@ -228,19 +228,5 @@ st.dataframe(
     ],
     use_container_width=True,
 )
-# --- INTERNAL CALCULATIONS (hidden from UI) ---
 
-rem_stillage = stillage_cap - total_stillage
-rem_cube = cube_cap - total_cube
-rem_weight = payload_cap - total_weight
-
-wagons_by_space = ceil_div(total_stillage, stillage_cap)
-wagons_by_cube = ceil_div(total_cube, cube_cap)
-wagons_by_weight = ceil_div(total_weight, payload_cap)
-required_wagons = max(wagons_by_space, wagons_by_cube, wagons_by_weight)
-
-
-st.info(
-    "This version is an online calculator only (no Excel import). "
-    "To deploy on Streamlit Cloud, save as app.py and add requirements.txt with: streamlit, pandas, altair."
 )
