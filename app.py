@@ -9,9 +9,10 @@
 #
 # This version:
 # - Removes ALL Excel/.xlsm import logic
-# - Removes vehicle definitions table (Option 1: fixed vehicles)
+# - Removes vehicle definitions table (fixed vehicles)
 # - Moves vehicle selection to the very top
-# - Removes the constraint comparison bar chart
+# - Removes constraint comparison chart
+# - Removes "Assumptions for weight & cube" input section from the UI
 # - Includes a Goodloading-style wagon floor fill visual using Streamlit + HTML/CSS only
 
 import math
@@ -26,6 +27,12 @@ import streamlit as st
 DOORS_PER_STILLAGE_DEFAULT = 14
 STILLAGE_TO_LARGE_PALLET = 2.25
 LARGE_PALLET_TO_STILLAGE = 1 / STILLAGE_TO_LARGE_PALLET  # ~0.4444
+
+# Fixed assumptions (previous UI inputs are now hard-coded)
+DOOR_STILLAGE_WEIGHT_KG = 250.0
+DOOR_STILLAGE_CUBE_M3 = 1.6
+LARGE_PALLET_WEIGHT_KG = 600.0
+LARGE_PALLET_CUBE_M3 = 2.2
 
 
 # -----------------------
@@ -183,7 +190,7 @@ st.caption(
 )
 
 # -----------------------
-# FIXED VEHICLE DEFINITIONS (Option 1: not editable)
+# FIXED VEHICLE DEFINITIONS (not editable)
 # -----------------------
 vehicles = pd.DataFrame(
     [
@@ -197,18 +204,18 @@ vehicles = pd.DataFrame(
 vehicles["stillage_cap"] = vehicles["pallet_cap"].astype(float) * LARGE_PALLET_TO_STILLAGE
 
 # -----------------------
-# VEHICLE SELECTION (moved to top)
+# VEHICLE SELECTION (top)
 # -----------------------
 st.subheader("Vehicle")
 vehicle_name = st.selectbox("Choose vehicle", vehicles["vehicle"].tolist(), index=4)
 veh = vehicles.loc[vehicles["vehicle"] == vehicle_name].iloc[0]
 
 # -----------------------
-# INPUTS (DOORS + LARGE PALLETS)
+# LOAD INPUTS (ONLY)
 # -----------------------
 st.subheader("Load inputs")
 
-col1, col2, col3 = st.columns([1, 1, 1])
+col1, col2 = st.columns([1, 1])
 
 with col1:
     doors_per_stillage = st.number_input("Doors per stillage", min_value=1, value=DOORS_PER_STILLAGE_DEFAULT, step=1)
@@ -217,14 +224,6 @@ with col1:
 
 with col2:
     large_pallet_qty = st.number_input("Large pallet quantity (2.8m)", min_value=0.0, value=0.0, step=1.0)
-
-with col3:
-    st.markdown("### Assumptions for weight & cube")
-    door_stillage_weight = st.number_input("Weight per loaded door stillage (kg)", min_value=0.0, value=250.0, step=10.0)
-    door_stillage_cube = st.number_input("Volume per loaded door stillage (m³)", min_value=0.0, value=1.6, step=0.1)
-
-    large_pallet_weight = st.number_input("Weight per large pallet (kg)", min_value=0.0, value=600.0, step=10.0)
-    large_pallet_cube = st.number_input("Volume per large pallet (m³)", min_value=0.0, value=2.2, step=0.1)
 
 # -----------------------
 # BUILD ORDER LINES
@@ -238,8 +237,8 @@ lines = pd.DataFrame(
             "qty": float(door_qty),
             "load_units": float(door_stillages),  # stillages
             "stillage_equiv": 1.0,
-            "weight_per_unit_kg": float(door_stillage_weight),
-            "vol_per_unit_m3": float(door_stillage_cube),
+            "weight_per_unit_kg": float(DOOR_STILLAGE_WEIGHT_KG),
+            "vol_per_unit_m3": float(DOOR_STILLAGE_CUBE_M3),
             "upright_required": bool(doors_upright_required),
         },
         {
@@ -247,8 +246,8 @@ lines = pd.DataFrame(
             "qty": float(large_pallet_qty),
             "load_units": float(large_pallet_qty),  # pallets
             "stillage_equiv": float(LARGE_PALLET_TO_STILLAGE),
-            "weight_per_unit_kg": float(large_pallet_weight),
-            "vol_per_unit_m3": float(large_pallet_cube),
+            "weight_per_unit_kg": float(LARGE_PALLET_WEIGHT_KG),
+            "vol_per_unit_m3": float(LARGE_PALLET_CUBE_M3),
             "upright_required": False,
         },
     ]
