@@ -7,11 +7,12 @@
 # - 1 stillage = 2.25 large pallets
 #   => 1 large pallet = 1/2.25 = 0.444... stillage spaces
 #
-# This version REMOVES all Excel/.xlsm picker import logic.
-# You enter door quantity and large pallet quantity directly in the app.
-#
-# Altair removed. Includes a Goodloading-style wagon floor fill visual
-# using Streamlit + HTML/CSS only.
+# This version:
+# - Removes ALL Excel/.xlsm import logic
+# - Removes vehicle definitions table (Option 1: fixed vehicles)
+# - Moves vehicle selection to the very top
+# - Removes the constraint comparison bar chart
+# - Includes a Goodloading-style wagon floor fill visual using Streamlit + HTML/CSS only
 
 import math
 
@@ -30,25 +31,12 @@ LARGE_PALLET_TO_STILLAGE = 1 / STILLAGE_TO_LARGE_PALLET  # ~0.4444
 # -----------------------
 # HELPERS
 # -----------------------
-def ceil_div(a: float, b: float) -> int:
-    if b == 0:
-        return 0
-    return int(math.ceil(a / b))
-
-
 def traffic_label(util: float) -> str:
     if util <= 0.85:
         return "🟢 OK"
     if util <= 1.0:
         return "🟠 Tight"
     return "🔴 Over"
-
-
-def safe_float(x, default=0.0) -> float:
-    try:
-        return float(x)
-    except Exception:
-        return float(default)
 
 
 def build_floor_fill_html(
@@ -188,24 +176,16 @@ def build_floor_fill_html(
 # STREAMLIT UI
 # -----------------------
 st.set_page_config(page_title="Wagon Fill Calculator", layout="wide")
-st.title("Wagon Fill Calculator (Online Calculator)")
-
+st.title("Wagon Fill Calculator")
 st.caption(
-    "Base unit = stillage space. Rules: 14 doors per stillage; only large pallets (2.8m); "
-    "1 stillage = 2.25 large pallets."
+    "Rules: 14 doors per stillage; only large pallets (2.8m); 1 stillage = 2.25 large pallets. "
+    "This is an online calculator (no Excel import)."
 )
 
 # -----------------------
-# VEHICLE DEFINITIONS
+# FIXED VEHICLE DEFINITIONS (Option 1: not editable)
 # -----------------------
-st.subheader("Vehicle definitions")
-
-st.info(
-    "Edit the vehicle table below so pallet_cap matches your **2.8m large pallet** capacity. "
-    "Cube (m³) and payload (kg) should be your operational limits."
-)
-
-default_vehicles = pd.DataFrame(
+vehicles = pd.DataFrame(
     [
         {"vehicle": "3.5t", "pallet_cap": 2, "cube_cap_m3": 15.0, "payload_kg": 1200, "doors_upright_allowed": False},
         {"vehicle": "7.5t", "pallet_cap": 8, "cube_cap_m3": 35.0, "payload_kg": 2500, "doors_upright_allowed": False},
@@ -214,31 +194,13 @@ default_vehicles = pd.DataFrame(
         {"vehicle": "44t Artic", "pallet_cap": 26, "cube_cap_m3": 80.0, "payload_kg": 28000, "doors_upright_allowed": True},
     ]
 )
-
-vehicles = st.data_editor(
-    default_vehicles,
-    num_rows="dynamic",
-    use_container_width=True,
-    hide_index=True,
-).copy()
-
-if vehicles.empty:
-    st.error("Please enter at least one vehicle in the table above.")
-    st.stop()
-
-# Clean numeric fields
-vehicles["pallet_cap"] = vehicles["pallet_cap"].apply(safe_float)
-vehicles["cube_cap_m3"] = vehicles["cube_cap_m3"].apply(safe_float)
-vehicles["payload_kg"] = vehicles["payload_kg"].apply(safe_float)
-
-# Compute stillage capacity from large pallet capacity
 vehicles["stillage_cap"] = vehicles["pallet_cap"].astype(float) * LARGE_PALLET_TO_STILLAGE
 
 # -----------------------
-# VEHICLE SELECTION
+# VEHICLE SELECTION (moved to top)
 # -----------------------
-st.subheader("Vehicle selection")
-vehicle_name = st.selectbox("Choose vehicle", vehicles["vehicle"].tolist(), index=0)
+st.subheader("Vehicle")
+vehicle_name = st.selectbox("Choose vehicle", vehicles["vehicle"].tolist(), index=4)
 veh = vehicles.loc[vehicles["vehicle"] == vehicle_name].iloc[0]
 
 # -----------------------
@@ -249,9 +211,7 @@ st.subheader("Load inputs")
 col1, col2, col3 = st.columns([1, 1, 1])
 
 with col1:
-    doors_per_stillage = st.number_input(
-        "Doors per stillage", min_value=1, value=DOORS_PER_STILLAGE_DEFAULT, step=1
-    )
+    doors_per_stillage = st.number_input("Doors per stillage", min_value=1, value=DOORS_PER_STILLAGE_DEFAULT, step=1)
     door_qty = st.number_input("Door quantity", min_value=0.0, value=0.0, step=1.0)
     doors_upright_required = st.checkbox("Doors require upright stillages", value=True)
 
@@ -260,19 +220,11 @@ with col2:
 
 with col3:
     st.markdown("### Assumptions for weight & cube")
-    door_stillage_weight = st.number_input(
-        "Weight per loaded door stillage (kg)", min_value=0.0, value=250.0, step=10.0
-    )
-    door_stillage_cube = st.number_input(
-        "Volume per loaded door stillage (m³)", min_value=0.0, value=1.6, step=0.1
-    )
+    door_stillage_weight = st.number_input("Weight per loaded door stillage (kg)", min_value=0.0, value=250.0, step=10.0)
+    door_stillage_cube = st.number_input("Volume per loaded door stillage (m³)", min_value=0.0, value=1.6, step=0.1)
 
-    large_pallet_weight = st.number_input(
-        "Weight per large pallet (kg)", min_value=0.0, value=600.0, step=10.0
-    )
-    large_pallet_cube = st.number_input(
-        "Volume per large pallet (m³)", min_value=0.0, value=2.2, step=0.1
-    )
+    large_pallet_weight = st.number_input("Weight per large pallet (kg)", min_value=0.0, value=600.0, step=10.0)
+    large_pallet_cube = st.number_input("Volume per large pallet (m³)", min_value=0.0, value=2.2, step=0.1)
 
 # -----------------------
 # BUILD ORDER LINES
@@ -285,7 +237,7 @@ lines = pd.DataFrame(
             "item": "Doors",
             "qty": float(door_qty),
             "load_units": float(door_stillages),  # stillages
-            "stillage_equiv": 1.0,  # 1 stillage = 1 stillage space
+            "stillage_equiv": 1.0,
             "weight_per_unit_kg": float(door_stillage_weight),
             "vol_per_unit_m3": float(door_stillage_cube),
             "upright_required": bool(doors_upright_required),
@@ -294,7 +246,7 @@ lines = pd.DataFrame(
             "item": "Large pallets (2.8m)",
             "qty": float(large_pallet_qty),
             "load_units": float(large_pallet_qty),  # pallets
-            "stillage_equiv": float(LARGE_PALLET_TO_STILLAGE),  # ~0.444 stillage spaces per pallet
+            "stillage_equiv": float(LARGE_PALLET_TO_STILLAGE),
             "weight_per_unit_kg": float(large_pallet_weight),
             "vol_per_unit_m3": float(large_pallet_cube),
             "upright_required": False,
@@ -329,7 +281,7 @@ limiting = max(utils, key=utils.get)
 overall = max(utils.values())
 
 # -----------------------
-# OUTPUTS / VISUALS
+# OUTPUTS
 # -----------------------
 st.subheader("Load utilisation")
 
@@ -367,10 +319,7 @@ with vc1:
 with vc2:
     fill_order = st.selectbox("Fill order", ["Doors then pallets", "Pallets then doors"], index=0)
 with vc3:
-    st.caption(
-        "Goodloading-style visual using quarter-pallet cells. "
-        "It’s a simple fill display (not a true packing optimiser yet)."
-    )
+    st.caption("Goodloading-style visual using quarter-pallet cells (simple fill, not an optimiser).")
 
 html = build_floor_fill_html(
     pallet_cap=float(veh["pallet_cap"]),
@@ -400,7 +349,4 @@ st.dataframe(
     use_container_width=True,
 )
 
-st.info(
-    "This version is an online calculator only (no Excel import). "
-    "To deploy on Streamlit Cloud, save as app.py and add requirements.txt with: streamlit, pandas."
-)
+st.caption("Deployment: requirements.txt should contain `streamlit` and `pandas`.")
