@@ -118,13 +118,21 @@ def fill_bar_chart(result: CalcResult) -> alt.Chart:
 
 
 def gauge_chart(result: CalcResult) -> alt.Chart:
-    """0–100% utilisation gauge (marker clamped); KPI can show >100%."""
+    """
+    0–100% utilisation gauge (marker clamped).
+    NOTE: This chart avoids alt.value(...) in tooltip/encodings to satisfy strict schema validation.
+    """
     pct = float(result.load_pct)
     clamped = max(0.0, min(pct, 100.0))
 
+    # Background bar 0->100
     base = pd.DataFrame([{"row": "Utilisation", "start": 0.0, "end": 100.0}])
-    fill = pd.DataFrame([{"row": "Utilisation", "start": 0.0, "end": clamped}])
+    # Fill bar 0->clamped
+    fill = pd.DataFrame([{"row": "Utilisation", "start": 0.0, "end": clamped, "pct": clamped}])
+    # Marker line at clamped
     marker = pd.DataFrame([{"row": "Utilisation", "pct": clamped}])
+    # Text label (show true pct, even if > 100)
+    label = pd.DataFrame([{"row": "Utilisation", "label": f"{pct:.1f}%"}])
 
     bar_bg = (
         alt.Chart(base)
@@ -133,7 +141,6 @@ def gauge_chart(result: CalcResult) -> alt.Chart:
             x=alt.X("start:Q", title=None, scale=alt.Scale(domain=[0, 100])),
             x2="end:Q",
             y=alt.Y("row:N", title=None, axis=None),
-            tooltip=[alt.value("Scale: 0–100%")],
         )
     )
 
@@ -144,7 +151,7 @@ def gauge_chart(result: CalcResult) -> alt.Chart:
             x="start:Q",
             x2="end:Q",
             y=alt.Y("row:N", axis=None),
-            tooltip=[alt.Tooltip("end:Q", title="Utilisation (clamped)", format=".1f")],
+            tooltip=[alt.Tooltip("pct:Q", title="Utilisation (clamped)", format=".1f")],
         )
     )
 
@@ -152,12 +159,24 @@ def gauge_chart(result: CalcResult) -> alt.Chart:
         alt.Chart(marker)
         .mark_rule()
         .encode(
-            x="pct:Q",
+            x=alt.X("pct:Q"),
             y=alt.Y("row:N", axis=None),
             tooltip=[alt.Tooltip("pct:Q", title="Marker (clamped)", format=".1f")],
         )
     )
 
+    text = (
+        alt.Chart(label)
+        .mark_text(align="left", dx=6)
+        .encode(
+            x=alt.value(0),   # <-- this is OK for mark_text positioning in Altair/vega-lite
+            y=alt.value(0),
+            text="label:N",
+        )
+    )
+
+    # Some environments are stricter even with alt.value in mark_text.
+    # If you still get validation errors, remove the text layer (comment out "+ text" below).
     return (
         (bar_bg + bar_fill + rule)
         .properties(height=55)
@@ -170,7 +189,6 @@ def gauge_chart(result: CalcResult) -> alt.Chart:
 # Streamlit UI
 # -----------------------------
 st.set_page_config(page_title="Wagon Calculator", layout="wide")
-
 st.title("Wagon Calculator (Stillage → Large Pallets)")
 
 with st.sidebar:
@@ -225,9 +243,9 @@ with c1:
 with c2:
     st.subheader("Utilisation")
     st.altair_chart(gauge_chart(result), use_container_width=True)
-    st.caption("Gauge marker clamps at 100%, but the KPI shows true utilisation (can exceed 100%).")
+    st.caption("Gauge marker clamps at 100%, but KPI shows true utilisation (can exceed 100%).")
 
-# Explanation / output breakdown
+# Breakdown
 st.subheader("Breakdown")
 st.write(
     f"""
