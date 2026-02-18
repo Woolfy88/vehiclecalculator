@@ -1,23 +1,19 @@
 # app.py
 # Streamlit wagon fill calculator (ONLINE CALCULATOR ONLY)
 #
-# UPDATED RULE (as requested):
-# - 2.5 stillages = 1 x pallet
-#   => 1 stillage = 0.4 pallet
-#
-# Other rules kept:
-# - 1 stillage holds MAX 14 doors (FIXED, hidden from UI)
-# - Only LARGE pallets (2.8m)
-# - Visual: rectangle blocks with labels (D1.. and P1..)
-# - Option to "Double-stack pallets" (reduces floor pallets by half, rounded up)
-#
-# Notes on double-stacking:
-# - Applies ONLY to pallets (not door stillages).
-# - If enabled: floor pallets shown = ceil(pallet_count / 2)
-# - Weight and cube calculations remain based on FULL pallet count (you still carry them).
+# UPDATED (as requested):
+# - REMOVED: "2.5 stillages = 1 pallet" reporting (no stillage-equivalent logic).
+# - Focus is vehicle FLOOR SPACE using real footprints:
+#     * Steel door stillage footprint: 1200mm x 1000mm (1.2m x 1.0m)
+#     * Wood pallet footprint:        1200mm x 2800mm (1.2m x 2.8m)
+# - Vehicle cube cap is computed from internal dimensions (L x W x H).
+# - Floor utilisation is based on m² used vs vehicle floor area (L x W).
+# - Visual remains the APPROX pallet grid (as before), but capacity is derived from floor area.
+# - Double-stack pallets option remains:
+#     * Applies ONLY to pallets for FLOOR space and VISUAL footprint (ceil(pallets/2))
+#     * Weight and cube remain based on full pallet count.
 
 import math
-
 import pandas as pd
 import streamlit as st
 
@@ -27,11 +23,12 @@ import streamlit as st
 # -----------------------
 DOORS_PER_STILLAGE = 14  # FIXED (hidden from UI)
 
-# Conversion rule (UPDATED):
-# 2.5 stillages = 1 pallet  => stillage = 0.4 pallet
-STILLAGES_PER_LARGE_PALLET = 2.5
-STILLAGE_TO_LARGE_PALLET = 1.0 / STILLAGES_PER_LARGE_PALLET  # 0.4 pallet per stillage
-LARGE_PALLET_TO_STILLAGE = STILLAGES_PER_LARGE_PALLET        # 2.5 stillage spaces per pallet
+# Footprints (metres)
+STILLAGE_L, STILLAGE_W = 1.2, 1.0   # 1200 x 1000
+PALLET_L, PALLET_W = 2.8, 1.2       # 2800 x 1200
+
+STILLAGE_AREA_M2 = STILLAGE_L * STILLAGE_W   # 1.20
+PALLET_AREA_M2 = PALLET_L * PALLET_W         # 3.36
 
 # Fixed assumptions (hidden from UI)
 DOOR_STILLAGE_WEIGHT_KG = 250.0
@@ -52,7 +49,7 @@ def traffic_label(util: float) -> str:
 
 
 def build_floor_blocks_html(
-    pallet_cap: float,
+    pallet_cap_equiv: float,
     door_stillages: int,
     large_pallet_qty: float,
     columns_pallets: int = 2,
@@ -63,10 +60,14 @@ def build_floor_blocks_html(
     Rectangle/block visual using quarter-pallet units:
     - Floor grid units: 1 pallet = 4x4 quarters (16)
     - Pallet block: 4x4 quarters (1x1 pallet)
-    - Door stillage block footprint updated to approx 0.4 pallet:
-        0.4 pallet = 6.4 quarters => use 3x2 quarters (6/16 = 0.375) as a close visual proxy.
-    - Simple shelf packing: left-to-right, then new row
-    - Overflow items shown in a separate overflow lane
+    - Door stillage block footprint (visual proxy):
+        True ratio = STILLAGE_AREA / PALLET_AREA ≈ 1.20 / 3.36 ≈ 0.357 pallet
+        Use 3x2 quarters = 6/16 = 0.375 pallet as a close proxy.
+
+    Capacity:
+    - pallet_cap_equiv is a *pallet-equivalent* capacity derived from floor area:
+        floor_area_m2 / PALLET_AREA_M2
+      This keeps the visual in a pallet grid while respecting real floor area.
 
     Double-stacking:
     - Visual/floor footprint ONLY: if enabled, floor pallets shown = ceil(pallet_count / 2)
@@ -76,7 +77,7 @@ def build_floor_blocks_html(
     Q = 4  # quarters per pallet side (so 1 pallet = 4x4 quarters)
     floor_w = max(1, int(columns_pallets)) * Q
 
-    cap_pallets = max(0.0, float(pallet_cap))
+    cap_pallets = max(0.0, float(pallet_cap_equiv))
     cap_quarters = int(round(cap_pallets * (Q * Q)))  # pallets * 16 quarters per pallet
 
     # Item counts (inputs)
@@ -84,14 +85,10 @@ def build_floor_blocks_html(
     pallet_count = max(0, int(round(float(large_pallet_qty))))
 
     # Block footprints (in quarters)
-    # Pallet: 1 x 1 pallet
-    PAL_W, PAL_H = 4, 4
-
-    # Door stillage: approx 0.4 pallet footprint (visual proxy)
-    DOOR_W, DOOR_H = 3, 2  # 6 quarters = 0.375 pallet (close to 0.4)
+    PAL_W, PAL_H = 4, 4         # Pallet: 1 x 1 pallet
+    DOOR_W, DOOR_H = 3, 2       # Door stillage proxy: 6 quarters = 0.375 pallet
 
     # If double-stacking, convert pallets into "floor pallet stacks"
-    # Each stack represents 2 pallets, except possibly the last which can be 1.
     pallet_stacks = []
     if double_stack_pallets and pallet_count > 0:
         stacks = int(math.ceil(pallet_count / 2))
@@ -267,9 +264,9 @@ def build_floor_blocks_html(
 
     stats = f"""
     <div style="margin:6px 0 10px 0; font-size:0.95rem;">
-      <b>Capacity:</b> {cap_pallets:.0f} large pallets
-      &nbsp; | &nbsp; <b>Placed:</b> {used_pallets_equiv:.2f} pallets (floor area)
-      &nbsp; | &nbsp; <b>Overflow:</b> {overflow_pallets_equiv:.2f} pallets (floor area)
+      <b>Capacity (pallet-equiv):</b> {cap_pallets:.2f}
+      &nbsp; | &nbsp; <b>Placed:</b> {used_pallets_equiv:.2f} (floor area)
+      &nbsp; | &nbsp; <b>Overflow:</b> {overflow_pallets_equiv:.2f} (floor area)
     </div>
     """
 
@@ -298,7 +295,8 @@ def build_floor_blocks_html(
     stacking_note = "Pallet stacking: ON (2-high where possible)." if double_stack_pallets else "Pallet stacking: OFF."
     hint = f"""
     <div class="subtle">
-      Blocks: pallet = 1×1. Door stillage visual footprint ≈ 0.4 pallet (proxy). Width: {columns_pallets} pallet(s). {stacking_note}
+      Visual uses an approximate pallet grid. Door stillage block is a close proxy to real footprint ratio.
+      Width: {columns_pallets} pallet(s). {stacking_note}
       This is a simple layout (not a full packing optimiser).
     </div>
     """
@@ -312,31 +310,34 @@ def build_floor_blocks_html(
 st.set_page_config(page_title="Wagon Fill Calculator", layout="wide")
 st.title("Wagon Fill Calculator")
 st.caption(
-    "Rules: 14 doors per stillage; only large pallets (2.8m); "
-    "2.5 stillages = 1 pallet. Online calculator (no Excel import)."
+    "Focus: vehicle FLOOR SPACE (m²) using real footprints. "
+    "Rules: 14 doors per stillage; pallets are 1200×2800; stillages are 1200×1000. "
+    "Online calculator (no Excel import)."
 )
 
 # -----------------------
-# FIXED VEHICLE DEFINITIONS (not editable)
+
+# VEHICLE DEFINITIONS (computed from internal dimensions)
 # -----------------------
 vehicles = pd.DataFrame(
     [
-        {"vehicle": "3.5t", "pallet_cap": 2, "cube_cap_m3": 15.0, "payload_kg": 1200, "doors_upright_allowed": False},
-        {"vehicle": "7.5t", "pallet_cap": 8, "cube_cap_m3": 35.0, "payload_kg": 2500, "doors_upright_allowed": False},
-        {"vehicle": "18t", "pallet_cap": 14, "cube_cap_m3": 45.0, "payload_kg": 9000, "doors_upright_allowed": True},
-        {"vehicle": "26t", "pallet_cap": 16, "cube_cap_m3": 55.0, "payload_kg": 12000, "doors_upright_allowed": True},
-        {"vehicle": "44t Artic", "pallet_cap": 26, "cube_cap_m3": 80.0, "payload_kg": 28000, "doors_upright_allowed": True},
+        {"vehicle": "3.5t", "L_m": 3.66, "W_m": 2.00, "H_m": 1.75, "payload_kg": 1200,  "doors_upright_allowed": False},
+        {"vehicle": "7.5t", "L_m": 5.49, "W_m": 2.40, "H_m": 2.20, "payload_kg": 2500,  "doors_upright_allowed": False},
+        {"vehicle": "18t",  "L_m": 8.33, "W_m": 2.54, "H_m": 2.60, "payload_kg": 10000, "doors_upright_allowed": True},
+        {"vehicle": "26t",  "L_m": 9.15, "W_m": 2.54, "H_m": 2.60, "payload_kg": 15500, "doors_upright_allowed": True},
+        {"vehicle": "44t Artic & Trailer", "L_m": 13.5, "W_m": 2.48, "H_m": 2.60, "payload_kg": 28000, "doors_upright_allowed": True},
     ]
 )
 
-# With the updated rule, each pallet corresponds to 2.5 stillage spaces.
-vehicles["stillage_cap"] = vehicles["pallet_cap"].astype(float) * float(LARGE_PALLET_TO_STILLAGE)
+vehicles["cube_cap_m3"] = vehicles["L_m"] * vehicles["W_m"] * vehicles["H_m"]
+vehicles["floor_area_m2"] = vehicles["L_m"] * vehicles["W_m"]
+
 
 # -----------------------
 # VEHICLE SELECTION (top)
 # -----------------------
 st.subheader("Vehicle")
-vehicle_name = st.selectbox("Choose vehicle", vehicles["vehicle"].tolist(), index=4)
+vehicle_name = st.selectbox("Choose vehicle", vehicles["vehicle"].tolist(), index=len(vehicles) - 1)
 veh = vehicles.loc[vehicles["vehicle"] == vehicle_name].iloc[0]
 
 # -----------------------
@@ -351,32 +352,40 @@ with col1:
     doors_upright_required = st.checkbox("Doors require upright stillages", value=True)
 
 with col2:
-    large_pallet_qty = st.number_input("Large pallet quantity (2.8m)", min_value=0.0, value=0.0, step=1.0)
+    large_pallet_qty = st.number_input("Large pallet quantity (1200×2800)", min_value=0.0, value=0.0, step=1.0)
 
 with col3:
     double_stack_pallets = st.checkbox("Double-stack pallets (2-high)", value=False)
 
 # -----------------------
-# BUILD ORDER LINES
+# CONVERT LOAD
 # -----------------------
 door_stillages = int(math.ceil(float(door_qty) / float(DOORS_PER_STILLAGE))) if DOORS_PER_STILLAGE > 0 else 0
 
+# Floor pallets shown/used for floor space when stacking is enabled
+pallet_floor_qty = float(large_pallet_qty)
+if double_stack_pallets:
+    pallet_floor_qty = float(math.ceil(pallet_floor_qty / 2.0))
+
+# Build detail lines (no stillage-equivalent)
 lines = pd.DataFrame(
     [
         {
-            "item": "Doors",
+            "item": "Doors (in stillages)",
             "qty": float(door_qty),
-            "load_units": float(door_stillages),  # stillages
-            "stillage_equiv": 1.0,  # 1 stillage consumes 1 stillage space
+            "load_units": float(door_stillages),
+            "unit_type": "stillage",
+            "footprint_m2_per_unit": float(STILLAGE_AREA_M2),
             "weight_per_unit_kg": float(DOOR_STILLAGE_WEIGHT_KG),
             "vol_per_unit_m3": float(DOOR_STILLAGE_CUBE_M3),
             "upright_required": bool(doors_upright_required),
         },
         {
-            "item": "Large pallets (2.8m)",
+            "item": "Large pallets (1200×2800)",
             "qty": float(large_pallet_qty),
-            "load_units": float(large_pallet_qty),  # pallets
-            "stillage_equiv": float(LARGE_PALLET_TO_STILLAGE),  # pallets -> stillage spaces
+            "load_units": float(large_pallet_qty),  # full pallets for weight/cube
+            "unit_type": "pallet",
+            "footprint_m2_per_unit": float(PALLET_AREA_M2),
             "weight_per_unit_kg": float(LARGE_PALLET_WEIGHT_KG),
             "vol_per_unit_m3": float(LARGE_PALLET_CUBE_M3),
             "upright_required": False,
@@ -384,11 +393,11 @@ lines = pd.DataFrame(
     ]
 )
 
-lines["total_stillage_spaces"] = lines["load_units"] * lines["stillage_equiv"]
+lines["total_floor_m2"] = lines["load_units"] * lines["footprint_m2_per_unit"]
 lines["total_weight_kg"] = lines["load_units"] * lines["weight_per_unit_kg"]
 lines["total_vol_m3"] = lines["load_units"] * lines["vol_per_unit_m3"]
 
-total_stillage = float(lines["total_stillage_spaces"].sum())
+# Totals (weight/cube on full pallets; floor m² recalculated below with stacking)
 total_weight = float(lines["total_weight_kg"].sum())
 total_cube = float(lines["total_vol_m3"].sum())
 
@@ -396,27 +405,20 @@ needs_upright = bool((lines["upright_required"] & (lines["load_units"] > 0)).any
 upright_ok = (not needs_upright) or bool(veh.get("doors_upright_allowed", True))
 
 # -----------------------
-# UTILISATION
+# UTILISATION (FLOOR SPACE FOCUS)
 # -----------------------
-stillage_cap = float(veh["stillage_cap"]) if float(veh["stillage_cap"]) else 0.0
+floor_area_m2 = float(veh["floor_area_m2"]) if float(veh["floor_area_m2"]) else 0.0
 cube_cap = float(veh["cube_cap_m3"]) if float(veh["cube_cap_m3"]) else 0.0
 payload_cap = float(veh["payload_kg"]) if float(veh["payload_kg"]) else 0.0
 
-# Floor-space utilisation for pallets can optionally treat stacking as reduced footprint:
-# - Doors (stillages) always consume floor space.
-# - Pallets consume floor space at half rate if double-stacked.
-pallet_floor_qty = float(large_pallet_qty)
-if double_stack_pallets:
-    pallet_floor_qty = float(math.ceil(pallet_floor_qty / 2.0))
+# Floor used m² (stacking affects pallets only)
+floor_used_m2 = float(door_stillages) * float(STILLAGE_AREA_M2) + float(pallet_floor_qty) * float(PALLET_AREA_M2)
 
-# Recompute floor-space total with stacking applied (for floor-space only)
-total_stillage_for_floor = float(door_stillages) + pallet_floor_qty * float(LARGE_PALLET_TO_STILLAGE)
-
-stillage_util = (total_stillage_for_floor / stillage_cap) if stillage_cap else 0.0
+floor_util = (floor_used_m2 / floor_area_m2) if floor_area_m2 else 0.0
 cube_util = (total_cube / cube_cap) if cube_cap else 0.0
 weight_util = (total_weight / payload_cap) if payload_cap else 0.0
 
-utils = {"Floor space (stillage)": stillage_util, "Cube": cube_util, "Weight": weight_util}
+utils = {"Floor space (m²)": floor_util, "Cube": cube_util, "Weight": weight_util}
 limiting = max(utils, key=utils.get)
 overall = max(utils.values())
 
@@ -436,9 +438,9 @@ with c1:
         st.caption("Note: floor-space utilisation and visual reflect double-stacking pallets; weight/cube remain unstacked.")
 
 with c2:
-    st.write("Floor space utilisation (stillage equivalent)")
-    st.progress(min(stillage_util, 1.0))
-    st.caption(f"{total_stillage_for_floor:.2f} / {stillage_cap:.2f} stillage spaces ({stillage_util*100:.0f}%)")
+    st.write("Floor space utilisation (m²)")
+    st.progress(min(floor_util, 1.0))
+    st.caption(f"{floor_used_m2:.1f} / {floor_area_m2:.1f} m² ({floor_util*100:.0f}%)")
 
 with c3:
     st.write("Cube utilisation (m³)")
@@ -451,7 +453,7 @@ with c4:
     st.caption(f"{total_weight:.0f} / {payload_cap:.0f} kg ({weight_util*100:.0f}%)")
 
 # -----------------------
-# WAGON FLOOR BLOCK VISUAL
+# WAGON FLOOR BLOCK VISUAL (approx pallet grid)
 # -----------------------
 st.subheader("Wagon floor layout")
 
@@ -463,8 +465,11 @@ with vc2:
 with vc3:
     st.caption("Block layout visual with labels (simple layout, not a full packing optimiser).")
 
+# Visual capacity is pallet-equivalent derived from real floor area (m²)
+pallet_cap_equiv = (floor_area_m2 / PALLET_AREA_M2) if PALLET_AREA_M2 else 0.0
+
 html = build_floor_blocks_html(
-    pallet_cap=float(veh["pallet_cap"]),
+    pallet_cap_equiv=float(pallet_cap_equiv),
     door_stillages=int(door_stillages),
     large_pallet_qty=float(large_pallet_qty),
     columns_pallets=int(width_pallets),
@@ -483,8 +488,9 @@ st.dataframe(
             "item",
             "qty",
             "load_units",
-            "stillage_equiv",
-            "total_stillage_spaces",
+            "unit_type",
+            "footprint_m2_per_unit",
+            "total_floor_m2",
             "total_weight_kg",
             "total_vol_m3",
         ]
