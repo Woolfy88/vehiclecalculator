@@ -2,20 +2,19 @@
 # Streamlit wagon fill calculator (ONLINE CALCULATOR ONLY)
 #
 # CURRENT RULES / BEHAVIOUR:
-# - Focus is vehicle FLOOR SPACE (m²) using real footprints:
-#     * Door stillage footprint: 1300mm x 1200mm (1.3m x 1.2m) => 1.56 m²
-#     * Large pallet footprint:  1200mm x 3000mm (1.2m x 3.0m) => 3.60 m²
+# - Focus is vehicle FLOOR SPACE using real footprints:
+#     * Steel door stillage footprint: 1300mm x 1200mm (1.3m x 1.2m)
+#     * Wood pallet footprint:        1200mm x 3000mm (1.2m x 3.0m)
 # - Vehicle cube cap is computed from internal dimensions (L x W x H).
-# - Floor utilisation is based on m² used vs vehicle floor area (L x W),
-#   with an optional "multi-drop dead space strip" that applies to PALLETS ONLY:
-#     * If enabled, pallets can use only (W - 0.30m) along full length.
-#     * Stillages can use full width, and are assumed to occupy the dead strip first.
-# - Double-stack pallets option:
+# - Floor utilisation is based on m² used vs USABLE vehicle floor area (L x usable_W).
+# - Optional "Multi-drop hub delivery dead space" reduces usable width by 0.30m down full length.
+# - Visual remains the APPROX pallet grid (as before), but capacity is derived from usable floor area.
+# - Double-stack pallets option remains:
 #     * Applies ONLY to pallets for FLOOR space and VISUAL footprint (ceil(pallets/2))
 #     * Weight and cube remain based on full pallet count.
 #
 # Notes:
-# - This is NOT a full packing optimiser; remaining capacity is guidance.
+# - This is NOT a full packing optimiser; remaining capacity in pallets/stillages is area-based guidance.
 
 import math
 import pandas as pd
@@ -27,14 +26,14 @@ import streamlit as st
 # -----------------------
 DOORS_PER_STILLAGE = 14  # FIXED (hidden from UI)
 
-# Footprints (metres)
+# Footprints (metres) - UPDATED
 STILLAGE_L, STILLAGE_W = 1.3, 1.2   # 1300 x 1200
 PALLET_L, PALLET_W = 3.0, 1.2       # 3000 x 1200
 
 STILLAGE_AREA_M2 = STILLAGE_L * STILLAGE_W   # 1.56
 PALLET_AREA_M2 = PALLET_L * PALLET_W         # 3.60
 
-# Dead space for hub multi-drops (metres) - applies to PALLETS ONLY
+# Dead space for hub multi-drops (metres) - UPDATED to 30cm
 DEAD_SPACE_GAP_M = 0.30  # 30cm continuous strip down full length
 
 # Fixed assumptions (hidden from UI)
@@ -71,22 +70,31 @@ def build_floor_blocks_html(
         True ratio = STILLAGE_AREA / PALLET_AREA ≈ 1.56 / 3.60 ≈ 0.433 pallet
         Use 3x2 quarters = 6/16 = 0.375 pallet as a close proxy.
 
-    NOTE:
-    - Visual capacity is still area-based and does not explicitly model "dead strip for pallets only".
-      The utilisation maths below DOES model that rule.
+    Capacity:
+    - pallet_cap_equiv is derived from usable floor area:
+        usable_floor_area_m2 / PALLET_AREA_M2
+
+    Double-stacking:
+    - Visual/floor footprint ONLY: if enabled, floor pallets shown = ceil(pallet_count / 2)
+    - Label shows stack count, e.g. P3×2 when representing 2 pallets.
     """
-    Q = 4
+    # --- sizing in quarter units ---
+    Q = 4  # quarters per pallet side (so 1 pallet = 4x4 quarters)
     floor_w = max(1, int(columns_pallets)) * Q
 
     cap_pallets = max(0.0, float(pallet_cap_equiv))
-    cap_quarters = int(math.floor(cap_pallets * (Q * Q)))
+    # Safer to floor capacity (avoid rounding "extra" space into existence)
+    cap_quarters = int(math.floor(cap_pallets * (Q * Q)))  # pallets * 16 quarters per pallet
 
+    # Item counts (inputs)
     door_stillages = max(0, int(door_stillages))
     pallet_count = max(0, int(round(float(large_pallet_qty))))
 
-    PAL_W, PAL_H = 4, 4
-    DOOR_W, DOOR_H = 3, 2
+    # Block footprints (in quarters)
+    PAL_W, PAL_H = 4, 4         # Pallet: 1 x 1 pallet
+    DOOR_W, DOOR_H = 3, 2       # Door stillage proxy: 6 quarters = 0.375 pallet
 
+    # If double-stacking, convert pallets into "floor pallet stacks"
     pallet_stacks = []
     if double_stack_pallets and pallet_count > 0:
         stacks = int(math.ceil(pallet_count / 2))
@@ -94,10 +102,11 @@ def build_floor_blocks_html(
         for _ in range(stacks):
             stack_n = 2 if remaining >= 2 else 1
             remaining -= stack_n
-            pallet_stacks.append(stack_n)
+            pallet_stacks.append(stack_n)  # 1 or 2
     else:
         pallet_stacks = [1] * pallet_count
 
+    # Build ordered item list (each "pallet stack" is one block)
     items = []
 
     def add_doors():
@@ -116,6 +125,7 @@ def build_floor_blocks_html(
         add_doors()
         add_pallets()
 
+    # --- shelf pack on a grid (quarters) ---
     placed = []
     overflow = []
 
@@ -144,15 +154,18 @@ def build_floor_blocks_html(
         shelf_h = max(shelf_h, h)
         used_quarters = new_used
 
+    # Compute floor height from placements
     floor_h = 0
     if placed:
         floor_h = max(py + ph for _, _, _, py, _, ph in placed)
-    floor_h = max(floor_h, Q)
+    floor_h = max(floor_h, Q)  # minimum height
 
+    # Convert quarter-units to pixels
     cell_px = 18
     floor_px_w = floor_w * cell_px
     floor_px_h = floor_h * cell_px
 
+    # Overflow layout (simple row/rows)
     ov_blocks = []
     ov_x = 0
     ov_y = 0
@@ -172,6 +185,7 @@ def build_floor_blocks_html(
 
     overflow_px_h = (ov_y + ov_row_h) if ov_blocks else 0
 
+    # Stats (placed area in pallets)
     used_pallets_equiv = used_quarters / float(Q * Q)
     overflow_pallets_equiv = sum((w * h) for _, _, w, h in overflow) / float(Q * Q)
 
@@ -304,55 +318,47 @@ st.title("Wagon Fill Calculator")
 st.caption(
     "Focus: vehicle FLOOR SPACE (m²) using real footprints. "
     "Rules: 14 doors per stillage; pallets are 1200×3000; stillages are 1300×1200. "
-    "Multi-drop dead space (0.30m) applies to pallets only when enabled."
+    "Online calculator (no Excel import)."
 )
 
 # -----------------------
-# VEHICLE DEFINITIONS (computed from internal dimensions)
+# VEHICLE DEFINITIONS (computed from internal dimensions) - UPDATED
 # -----------------------
 vehicles = pd.DataFrame(
     [
         {"vehicle": "3.5t", "L_m": 3.66, "W_m": 2.00, "H_m": 1.75, "payload_kg": 1200,   "doors_upright_allowed": False},
         {"vehicle": "7.5t", "L_m": 5.49, "W_m": 2.40, "H_m": 2.20, "payload_kg": 2500,   "doors_upright_allowed": False},
         {"vehicle": "18t",  "L_m": 8.33, "W_m": 2.54, "H_m": 2.67, "payload_kg": 10000,  "doors_upright_allowed": True},
+        # Per your update: 26t now uses 8.33m internal length (same as 18t)
         {"vehicle": "26t",  "L_m": 8.33, "W_m": 2.54, "H_m": 2.80, "payload_kg": 15500,  "doors_upright_allowed": True},
         {"vehicle": "44t Artic & Trailer", "L_m": 13.5, "W_m": 2.48, "H_m": 2.77, "payload_kg": 28000, "doors_upright_allowed": True},
     ]
 )
 
 vehicles["cube_cap_m3"] = vehicles["L_m"] * vehicles["W_m"] * vehicles["H_m"]
-vehicles["floor_area_m2"] = vehicles["L_m"] * vehicles["W_m"]
+vehicles["floor_area_m2"] = vehicles["L_m"] * vehicles["W_m"]  # raw (before hub dead-space)
 
 # -----------------------
-# VEHICLE SELECTION
+# VEHICLE SELECTION (top)
 # -----------------------
 st.subheader("Vehicle")
 vehicle_name = st.selectbox("Choose vehicle", vehicles["vehicle"].tolist(), index=len(vehicles) - 1)
 veh = vehicles.loc[vehicles["vehicle"] == vehicle_name].iloc[0]
 
 # -----------------------
-# DELIVERY MODE (pallet-only dead strip)
+# DELIVERY MODE (hub dead space option)
 # -----------------------
 st.subheader("Delivery mode")
 
-dead_space_enabled_default = False  # Default OFF across the fleet
-
+dead_space_enabled_default = False
 dead_space_enabled = st.checkbox(
-    "Multi-drop hub delivery (0.30m dead space down vehicle length — pallets only)",
+    "Multi-drop hub delivery (0.30m dead space down vehicle length)",
     value=dead_space_enabled_default,
 )
 
-# Vehicle base areas
-L_m = float(veh["L_m"])
-W_m = float(veh["W_m"])
-total_floor_area_m2 = L_m * W_m
-
-dead_strip_width_m = DEAD_SPACE_GAP_M if dead_space_enabled else 0.0
-dead_strip_area_m2 = L_m * dead_strip_width_m  # strip down full length
-
-# Pallet-usable floor area (stillages can use full area)
-pallet_usable_width_m = max(0.0, W_m - dead_strip_width_m)
-pallet_usable_area_m2 = L_m * pallet_usable_width_m
+usable_width_m = float(veh["W_m"]) - (DEAD_SPACE_GAP_M if dead_space_enabled else 0.0)
+usable_width_m = max(0.0, usable_width_m)
+usable_floor_area_m2 = float(veh["L_m"]) * usable_width_m
 
 # -----------------------
 # LOAD INPUTS
@@ -376,13 +382,18 @@ with col3:
 # -----------------------
 door_stillages = int(math.ceil(float(door_qty) / float(DOORS_PER_STILLAGE))) if DOORS_PER_STILLAGE > 0 else 0
 
+# Floor pallets shown/used for floor space when stacking is enabled
 pallet_floor_qty = float(large_pallet_qty)
 if double_stack_pallets:
     pallet_floor_qty = float(math.ceil(pallet_floor_qty / 2.0))
 
+# Separate floor-units so the detail table matches utilisation when stacking is ON
 door_floor_units = float(door_stillages)
 pallet_floor_units = float(pallet_floor_qty)
 
+# Detail lines:
+# - weight/cube on FULL pallet count
+# - floor m² uses floor_units (stacking affects pallets only)
 lines = pd.DataFrame(
     [
         {
@@ -414,6 +425,7 @@ lines["total_floor_m2"] = lines["floor_units"] * lines["footprint_m2_per_unit"]
 lines["total_weight_kg"] = lines["load_units"] * lines["weight_per_unit_kg"]
 lines["total_vol_m3"] = lines["load_units"] * lines["vol_per_unit_m3"]
 
+# Totals (weight/cube on full pallets)
 total_weight = float(lines["total_weight_kg"].sum())
 total_cube = float(lines["total_vol_m3"].sum())
 
@@ -421,47 +433,27 @@ needs_upright = bool((lines["upright_required"] & (lines["load_units"] > 0)).any
 upright_ok = (not needs_upright) or bool(veh.get("doors_upright_allowed", True))
 
 # -----------------------
-# FLOOR-SPACE LOGIC (dead strip applies to PALLETS only)
+# UTILISATION (FLOOR SPACE FOCUS)
 # -----------------------
-door_floor_m2 = float(door_stillages) * float(STILLAGE_AREA_M2)
-pallet_floor_m2 = float(pallet_floor_qty) * float(PALLET_AREA_M2)
-
-# Doors are assumed to occupy the dead strip first (since pallets can't use it)
-doors_in_dead_m2 = min(door_floor_m2, dead_strip_area_m2)
-doors_in_main_m2 = max(0.0, door_floor_m2 - doors_in_dead_m2)
-
-# Pallets can only use the pallet-usable area, minus any door area that had to spill into that zone
-pallet_area_available_after_doors_m2 = max(0.0, pallet_usable_area_m2 - doors_in_main_m2)
-
-# Overall occupancy vs total floor (simple sanity indicator)
-total_used_floor_m2 = door_floor_m2 + pallet_floor_m2
-overall_floor_occ_util = (total_used_floor_m2 / total_floor_area_m2) if total_floor_area_m2 else 0.0
-
-# Pallet constraint util (only meaningful if pallets exist)
-pallet_space_util = (pallet_floor_m2 / pallet_area_available_after_doors_m2) if (pallet_area_available_after_doors_m2 and pallet_floor_m2 > 0) else 0.0
-
-# Use the tighter of the two as the "Floor space (m²)" limiter
-floor_util = max(overall_floor_occ_util, pallet_space_util)
-
-# Remaining guidance
-remaining_total_m2 = max(0.0, total_floor_area_m2 - total_used_floor_m2)
-remaining_pallet_m2 = max(0.0, pallet_area_available_after_doors_m2 - pallet_floor_m2)
-
-remaining_stillages_total = int(math.floor(remaining_total_m2 / STILLAGE_AREA_M2)) if STILLAGE_AREA_M2 else 0
-remaining_pallet_positions = int(math.floor(remaining_pallet_m2 / PALLET_AREA_M2)) if PALLET_AREA_M2 else 0
-
-# -----------------------
-# OTHER CAPS
-# -----------------------
+floor_area_m2 = float(usable_floor_area_m2)  # usable (accounts for optional dead space)
 cube_cap = float(veh["cube_cap_m3"]) if float(veh["cube_cap_m3"]) else 0.0
 payload_cap = float(veh["payload_kg"]) if float(veh["payload_kg"]) else 0.0
 
+# Floor used m² (stacking affects pallets only)
+floor_used_m2 = float(door_stillages) * float(STILLAGE_AREA_M2) + float(pallet_floor_qty) * float(PALLET_AREA_M2)
+
+floor_util = (floor_used_m2 / floor_area_m2) if floor_area_m2 else 0.0
 cube_util = (total_cube / cube_cap) if cube_cap else 0.0
 weight_util = (total_weight / payload_cap) if payload_cap else 0.0
 
 utils = {"Floor space (m²)": floor_util, "Cube": cube_util, "Weight": weight_util}
 limiting = max(utils, key=utils.get)
 overall = max(utils.values())
+
+# Remaining space (area-based guidance)
+remaining_m2 = max(0.0, floor_area_m2 - floor_used_m2)
+remaining_pallet_positions = int(math.floor(remaining_m2 / PALLET_AREA_M2)) if PALLET_AREA_M2 else 0
+remaining_stillages = int(math.floor(remaining_m2 / STILLAGE_AREA_M2)) if STILLAGE_AREA_M2 else 0
 
 # -----------------------
 # OUTPUTS
@@ -473,44 +465,30 @@ c1, c2, c3, c4 = st.columns([1.6, 1, 1, 1])
 with c1:
     st.metric("Overall utilisation (limiting)", f"{overall*100:.0f}%", f"Limiting: {limiting}")
     st.write(f"Status: **{traffic_label(overall)}**")
-
     if not upright_ok:
         st.error("Not allowed: this load requires upright door stillages, and this vehicle cannot take them.")
-
     if double_stack_pallets and large_pallet_qty > 0:
         st.caption("Note: floor-space utilisation and visual reflect double-stacking pallets; weight/cube remain unstacked.")
-
     if dead_space_enabled:
-        st.caption(
-            "Multi-drop mode: 0.30m dead strip applies to pallets only. "
-            "Stillages can use the strip; pallets cannot."
-        )
+        st.caption("Hub multi-drop mode: usable width reduced by 0.30m for dead space down the vehicle length.")
 
 with c2:
     st.write("Floor space utilisation (m²)")
     st.progress(min(floor_util, 1.0))
+    cap_line = f"{floor_used_m2:.1f} / {floor_area_m2:.1f} m² ({floor_util*100:.0f}%)"
+    if dead_space_enabled:
+        cap_line += f"  |  Usable width: {usable_width_m:.2f} m (−{DEAD_SPACE_GAP_M:.2f} m)"
+    st.caption(cap_line)
 
-    st.caption(f"Total floor used: {total_used_floor_m2:.1f} / {total_floor_area_m2:.1f} m²  ({overall_floor_occ_util*100:.0f}%)")
-    if dead_space_enabled and pallet_floor_m2 > 0:
-        st.caption(
-            f"Pallet-usable width: {pallet_usable_width_m:.2f} m  |  "
-            f"Pallet area available (after doors): {pallet_area_available_after_doors_m2:.1f} m²  |  "
-            f"Pallets used: {pallet_floor_m2:.1f} m²  ({pallet_space_util*100:.0f}%)"
-        )
-
-    st.write("Remaining usable floor space (guidance)")
+    st.write("Remaining usable floor space")
     if double_stack_pallets:
         st.caption(
-            f"Overall remaining: {remaining_total_m2:.1f} m²  |  "
-            f"Pallet-remaining: {remaining_pallet_m2:.1f} m²  "
-            f"(≈ {remaining_pallet_positions} pallet position(s) ≈ up to {remaining_pallet_positions*2} pallets if 2-high)  |  "
-            f"≈ {remaining_stillages_total} stillage(s) overall"
+            f"{remaining_m2:.1f} m² remaining  |  ≈ {remaining_pallet_positions} pallet position(s) "
+            f"(≈ up to {remaining_pallet_positions*2} pallets if 2-high) or {remaining_stillages} stillage(s)"
         )
     else:
         st.caption(
-            f"Overall remaining: {remaining_total_m2:.1f} m²  |  "
-            f"Pallet-remaining: {remaining_pallet_m2:.1f} m² (≈ {remaining_pallet_positions} pallet(s))  |  "
-            f"≈ {remaining_stillages_total} stillage(s) overall"
+            f"{remaining_m2:.1f} m² remaining  |  ≈ {remaining_pallet_positions} pallet(s) or {remaining_stillages} stillage(s)"
         )
 
 with c3:
@@ -536,8 +514,8 @@ with vc2:
 with vc3:
     st.caption("Block layout visual with labels (simple layout, not a full packing optimiser).")
 
-# Visual capacity stays area-based. If you want, we can enhance this later to visually show the dead strip.
-pallet_cap_equiv = (total_floor_area_m2 / PALLET_AREA_M2) if PALLET_AREA_M2 else 0.0
+# Visual capacity is pallet-equivalent derived from USABLE floor area (m²)
+pallet_cap_equiv = (floor_area_m2 / PALLET_AREA_M2) if PALLET_AREA_M2 else 0.0
 
 html = build_floor_blocks_html(
     pallet_cap_equiv=float(pallet_cap_equiv),
