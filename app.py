@@ -350,7 +350,7 @@ veh = vehicles.loc[vehicles["vehicle"] == vehicle_name].iloc[0]
 # -----------------------
 st.subheader("Delivery mode")
 
-dead_space_enabled_default = vehicle_name in ["26t", "44t Artic & Trailer"]
+dead_space_enabled_default = False
 dead_space_enabled = st.checkbox(
     "Multi-drop hub delivery (0.30m dead space down vehicle length)",
     value=dead_space_enabled_default,
