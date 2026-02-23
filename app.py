@@ -7,7 +7,7 @@
 #     * Wood pallet footprint:        1200mm x 3000mm (1.2m x 3.0m)
 # - Vehicle cube cap is computed from internal dimensions (L x W x H).
 # - Floor utilisation is based on m² used vs USABLE vehicle floor area (L x usable_W).
-# - Optional "Multi-drop hub delivery dead space" reduces usable width by 0.50m down full length.
+# - Optional "Multi-drop hub delivery dead space" reduces usable width by 0.30m down full length.
 # - Visual remains the APPROX pallet grid (as before), but capacity is derived from usable floor area.
 # - Double-stack pallets option remains:
 #     * Applies ONLY to pallets for FLOOR space and VISUAL footprint (ceil(pallets/2))
@@ -33,8 +33,8 @@ PALLET_L, PALLET_W = 3.0, 1.2       # 3000 x 1200
 STILLAGE_AREA_M2 = STILLAGE_L * STILLAGE_W   # 1.56
 PALLET_AREA_M2 = PALLET_L * PALLET_W         # 3.60
 
-# Dead space for hub multi-drops (metres)
-DEAD_SPACE_GAP_M = 0.50  # 50cm continuous strip down full length
+# Dead space for hub multi-drops (metres) - UPDATED to 30cm
+DEAD_SPACE_GAP_M = 0.30  # 30cm continuous strip down full length
 
 # Fixed assumptions (hidden from UI)
 DOOR_STILLAGE_WEIGHT_KG = 250.0
@@ -329,7 +329,7 @@ vehicles = pd.DataFrame(
         {"vehicle": "3.5t", "L_m": 3.66, "W_m": 2.00, "H_m": 1.75, "payload_kg": 1200,   "doors_upright_allowed": False},
         {"vehicle": "7.5t", "L_m": 5.49, "W_m": 2.40, "H_m": 2.20, "payload_kg": 2500,   "doors_upright_allowed": False},
         {"vehicle": "18t",  "L_m": 8.33, "W_m": 2.54, "H_m": 2.67, "payload_kg": 10000,  "doors_upright_allowed": True},
-        # Per your update: 26t now uses 8.33m internal length (not 9.15m)
+        # Per your update: 26t now uses 8.33m internal length (same as 18t)
         {"vehicle": "26t",  "L_m": 8.33, "W_m": 2.54, "H_m": 2.80, "payload_kg": 15500,  "doors_upright_allowed": True},
         {"vehicle": "44t Artic & Trailer", "L_m": 13.5, "W_m": 2.48, "H_m": 2.77, "payload_kg": 28000, "doors_upright_allowed": True},
     ]
@@ -352,7 +352,7 @@ st.subheader("Delivery mode")
 
 dead_space_enabled_default = vehicle_name in ["26t", "44t Artic & Trailer"]
 dead_space_enabled = st.checkbox(
-    "Multi-drop hub delivery (0.50m dead space down vehicle length)",
+    "Multi-drop hub delivery (0.30m dead space down vehicle length)",
     value=dead_space_enabled_default,
 )
 
@@ -470,7 +470,7 @@ with c1:
     if double_stack_pallets and large_pallet_qty > 0:
         st.caption("Note: floor-space utilisation and visual reflect double-stacking pallets; weight/cube remain unstacked.")
     if dead_space_enabled:
-        st.caption("Hub multi-drop mode: usable width reduced by 0.50m for dead space down the vehicle length.")
+        st.caption("Hub multi-drop mode: usable width reduced by 0.30m for dead space down the vehicle length.")
 
 with c2:
     st.write("Floor space utilisation (m²)")
