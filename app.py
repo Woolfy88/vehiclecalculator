@@ -7,17 +7,21 @@
 #     * Large pallet footprint:  1200mm x 3000mm (1.2m x 3.0m) => 3.60 m²
 # - Vehicle cube cap is computed from internal dimensions (L x W x H).
 # - Floor utilisation is based on m² used vs vehicle floor area (L x W).
-# - Double-stack pallets option remains:
+# - Double-stack pallets option:
 #     * Applies ONLY to pallets for FLOOR space and VISUAL footprint (ceil(pallets/2))
 #     * Weight and cube remain based on full pallet count.
 # - FULL rule:
 #     * If remaining floor space is less than the smallest addable unit footprint (min of stillage/pallet),
 #       we report the wagon as FULL (floor-space limited) even if cube remains.
+# - Calculation log:
+#     * User can save calculations with delivery date + site location
+#     * Log can be downloaded as CSV and cleared
 #
 # Notes:
 # - This is NOT a full packing optimiser; remaining capacity in pallets/stillages is area-based guidance.
 
 import math
+from datetime import datetime
 import pandas as pd
 import streamlit as st
 
@@ -76,23 +80,18 @@ def build_floor_blocks_html(
     - Visual/floor footprint ONLY: if enabled, floor pallets shown = ceil(pallet_count / 2)
     - Label shows stack count, e.g. P3×2 when representing 2 pallets.
     """
-    # --- sizing in quarter units ---
-    Q = 4  # quarters per pallet side (so 1 pallet = 4x4 quarters)
+    Q = 4
     floor_w = max(1, int(columns_pallets)) * Q
 
     cap_pallets = max(0.0, float(pallet_cap_equiv))
-    # Safer to floor capacity (avoid rounding "extra" space into existence)
-    cap_quarters = int(math.floor(cap_pallets * (Q * Q)))  # pallets * 16 quarters per pallet
+    cap_quarters = int(math.floor(cap_pallets * (Q * Q)))  # floor capacity in quarter-units
 
-    # Item counts (inputs)
     door_stillages = max(0, int(door_stillages))
     pallet_count = max(0, int(round(float(large_pallet_qty))))
 
-    # Block footprints (in quarters)
-    PAL_W, PAL_H = 4, 4         # Pallet: 1 x 1 pallet
-    DOOR_W, DOOR_H = 3, 2       # Door stillage proxy: 6 quarters = 0.375 pallet
+    PAL_W, PAL_H = 4, 4
+    DOOR_W, DOOR_H = 3, 2
 
-    # If double-stacking, convert pallets into "floor pallet stacks"
     pallet_stacks = []
     if double_stack_pallets and pallet_count > 0:
         stacks = int(math.ceil(pallet_count / 2))
@@ -100,11 +99,10 @@ def build_floor_blocks_html(
         for _ in range(stacks):
             stack_n = 2 if remaining >= 2 else 1
             remaining -= stack_n
-            pallet_stacks.append(stack_n)  # 1 or 2
+            pallet_stacks.append(stack_n)
     else:
         pallet_stacks = [1] * pallet_count
 
-    # Build ordered item list (each "pallet stack" is one block)
     items = []
 
     def add_doors():
@@ -123,10 +121,8 @@ def build_floor_blocks_html(
         add_doors()
         add_pallets()
 
-    # --- shelf pack on a grid (quarters) ---
     placed = []
     overflow = []
-
     x = 0
     y = 0
     shelf_h = 0
@@ -152,18 +148,12 @@ def build_floor_blocks_html(
         shelf_h = max(shelf_h, h)
         used_quarters = new_used
 
-    # Compute floor height from placements
-    floor_h = 0
-    if placed:
-        floor_h = max(py + ph for _, _, _, py, _, ph in placed)
-    floor_h = max(floor_h, Q)  # minimum height
+    floor_h = max((max(py + ph for _, _, _, py, _, ph in placed) if placed else 0), Q)
 
-    # Convert quarter-units to pixels
     cell_px = 18
     floor_px_w = floor_w * cell_px
     floor_px_h = floor_h * cell_px
 
-    # Overflow layout (simple row/rows)
     ov_blocks = []
     ov_x = 0
     ov_y = 0
@@ -183,7 +173,6 @@ def build_floor_blocks_html(
 
     overflow_px_h = (ov_y + ov_row_h) if ov_blocks else 0
 
-    # Stats (placed area in pallets)
     used_pallets_equiv = used_quarters / float(Q * Q)
     overflow_pallets_equiv = sum((w * h) for _, _, w, h in overflow) / float(Q * Q)
 
@@ -336,7 +325,7 @@ vehicles["cube_cap_m3"] = vehicles["L_m"] * vehicles["W_m"] * vehicles["H_m"]
 vehicles["floor_area_m2"] = vehicles["L_m"] * vehicles["W_m"]
 
 # -----------------------
-# VEHICLE SELECTION (top)
+# VEHICLE SELECTION
 # -----------------------
 st.subheader("Vehicle")
 vehicle_name = st.selectbox("Choose vehicle", vehicles["vehicle"].tolist(), index=len(vehicles) - 1)
@@ -364,25 +353,20 @@ with col3:
 # -----------------------
 door_stillages = int(math.ceil(float(door_qty) / float(DOORS_PER_STILLAGE))) if DOORS_PER_STILLAGE > 0 else 0
 
-# Floor pallets shown/used for floor space when stacking is enabled
 pallet_floor_qty = float(large_pallet_qty)
 if double_stack_pallets:
     pallet_floor_qty = float(math.ceil(pallet_floor_qty / 2.0))
 
-# Separate floor-units so the detail table matches utilisation when stacking is ON
 door_floor_units = float(door_stillages)
 pallet_floor_units = float(pallet_floor_qty)
 
-# Detail lines:
-# - weight/cube on FULL pallet count
-# - floor m² uses floor_units (stacking affects pallets only)
 lines = pd.DataFrame(
     [
         {
             "item": "Doors (in stillages)",
             "qty": float(door_qty),
-            "load_units": float(door_stillages),   # weight/cube units
-            "floor_units": door_floor_units,       # floor-space units
+            "load_units": float(door_stillages),
+            "floor_units": door_floor_units,
             "unit_type": "stillage",
             "footprint_m2_per_unit": float(STILLAGE_AREA_M2),
             "weight_per_unit_kg": float(DOOR_STILLAGE_WEIGHT_KG),
@@ -392,8 +376,8 @@ lines = pd.DataFrame(
         {
             "item": "Large pallets (1200×3000)",
             "qty": float(large_pallet_qty),
-            "load_units": float(large_pallet_qty),  # full pallets for weight/cube
-            "floor_units": pallet_floor_units,      # stacked floor footprint
+            "load_units": float(large_pallet_qty),
+            "floor_units": pallet_floor_units,
             "unit_type": "pallet",
             "footprint_m2_per_unit": float(PALLET_AREA_M2),
             "weight_per_unit_kg": float(LARGE_PALLET_WEIGHT_KG),
@@ -407,7 +391,6 @@ lines["total_floor_m2"] = lines["floor_units"] * lines["footprint_m2_per_unit"]
 lines["total_weight_kg"] = lines["load_units"] * lines["weight_per_unit_kg"]
 lines["total_vol_m3"] = lines["load_units"] * lines["vol_per_unit_m3"]
 
-# Totals (weight/cube on full pallets)
 total_weight = float(lines["total_weight_kg"].sum())
 total_cube = float(lines["total_vol_m3"].sum())
 
@@ -415,13 +398,12 @@ needs_upright = bool((lines["upright_required"] & (lines["load_units"] > 0)).any
 upright_ok = (not needs_upright) or bool(veh.get("doors_upright_allowed", True))
 
 # -----------------------
-# UTILISATION (FLOOR SPACE FOCUS)
+# UTILISATION
 # -----------------------
 floor_area_m2 = float(veh["floor_area_m2"])
 cube_cap = float(veh["cube_cap_m3"]) if float(veh["cube_cap_m3"]) else 0.0
 payload_cap = float(veh["payload_kg"]) if float(veh["payload_kg"]) else 0.0
 
-# Floor used m² (stacking affects pallets only)
 floor_used_m2 = float(door_stillages) * float(STILLAGE_AREA_M2) + float(pallet_floor_qty) * float(PALLET_AREA_M2)
 
 floor_util = (floor_used_m2 / floor_area_m2) if floor_area_m2 else 0.0
@@ -432,12 +414,10 @@ utils = {"Floor space (m²)": floor_util, "Cube": cube_util, "Weight": weight_ut
 limiting = max(utils, key=utils.get)
 overall = max(utils.values())
 
-# Remaining space (area-based guidance)
 remaining_m2 = max(0.0, floor_area_m2 - floor_used_m2)
 remaining_pallets = int(math.floor(remaining_m2 / PALLET_AREA_M2)) if PALLET_AREA_M2 else 0
 remaining_stillages = int(math.floor(remaining_m2 / STILLAGE_AREA_M2)) if STILLAGE_AREA_M2 else 0
 
-# FULL flag: no space for any pallet or stillage (floor-space limited)
 min_addable_unit_m2 = min(STILLAGE_AREA_M2, PALLET_AREA_M2)
 is_full_floor = (remaining_m2 < min_addable_unit_m2) and (floor_used_m2 > 0)
 
@@ -459,6 +439,7 @@ with c1:
 
     if not upright_ok:
         st.error("Not allowed: this load requires upright door stillages, and this vehicle cannot take them.")
+
     if double_stack_pallets and large_pallet_qty > 0:
         st.caption("Note: floor-space utilisation and visual reflect double-stacking pallets; weight/cube remain unstacked.")
 
@@ -488,7 +469,7 @@ with c4:
     st.caption(f"{total_weight:.0f} / {payload_cap:.0f} kg ({weight_util*100:.0f}%)")
 
 # -----------------------
-# WAGON FLOOR BLOCK VISUAL (approx pallet grid)
+# WAGON FLOOR BLOCK VISUAL
 # -----------------------
 st.subheader("Wagon floor layout")
 
@@ -500,7 +481,6 @@ with vc2:
 with vc3:
     st.caption("Block layout visual with labels (simple layout, not a full packing optimiser).")
 
-# Visual capacity is pallet-equivalent derived from vehicle floor area (m²)
 pallet_cap_equiv = (floor_area_m2 / PALLET_AREA_M2) if PALLET_AREA_M2 else 0.0
 
 html = build_floor_blocks_html(
@@ -512,6 +492,87 @@ html = build_floor_blocks_html(
     double_stack_pallets=bool(double_stack_pallets),
 )
 st.markdown(html, unsafe_allow_html=True)
+
+# -----------------------
+# SAVE / DOWNLOAD LOG
+# -----------------------
+st.subheader("Calculation log")
+
+if "calc_log" not in st.session_state:
+    st.session_state["calc_log"] = []
+
+meta_col1, meta_col2 = st.columns(2)
+with meta_col1:
+    delivery_date = st.date_input("Delivery date")
+with meta_col2:
+    site_location = st.text_input("Site location")
+
+status_text = "FULL (floor space)" if is_full_floor else traffic_label(overall)
+
+log_row = {
+    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    "delivery_date": str(delivery_date),
+    "site_location": str(site_location),
+
+    "vehicle": str(vehicle_name),
+    "L_m": float(veh["L_m"]),
+    "W_m": float(veh["W_m"]),
+    "H_m": float(veh["H_m"]),
+    "payload_cap_kg": float(payload_cap),
+    "cube_cap_m3": float(cube_cap),
+    "floor_cap_m2": float(floor_area_m2),
+
+    "doors_qty": float(door_qty),
+    "door_stillages": int(door_stillages),
+    "pallet_qty": float(large_pallet_qty),
+    "double_stack_pallets": bool(double_stack_pallets),
+    "pallet_floor_qty": float(pallet_floor_qty),
+
+    "floor_used_m2": float(floor_used_m2),
+    "floor_util_pct": float(floor_util * 100.0),
+
+    "cube_used_m3": float(total_cube),
+    "cube_util_pct": float(cube_util * 100.0),
+
+    "weight_used_kg": float(total_weight),
+    "weight_util_pct": float(weight_util * 100.0),
+
+    "limiting_factor": str(limiting),
+    "overall_util_pct": float(overall * 100.0),
+    "status": str(status_text),
+
+    "remaining_m2": float(remaining_m2),
+    "remaining_pallets": int(remaining_pallets),
+    "remaining_stillages": int(remaining_stillages),
+}
+
+b1, b2, b3 = st.columns([1, 1, 2])
+
+with b1:
+    if st.button("💾 Save current calculation to log", use_container_width=True):
+        st.session_state["calc_log"].append(log_row)
+        st.success("Saved to log.")
+
+with b2:
+    if st.button("🗑️ Clear log", use_container_width=True):
+        st.session_state["calc_log"] = []
+        st.info("Log cleared.")
+
+log_df = pd.DataFrame(st.session_state["calc_log"])
+
+if log_df.empty:
+    st.caption("No saved calculations yet. Click **Save current calculation to log**.")
+else:
+    st.dataframe(log_df, use_container_width=True)
+
+    csv_bytes = log_df.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        label="⬇️ Download log (CSV)",
+        data=csv_bytes,
+        file_name="wagon_fill_log.csv",
+        mime="text/csv",
+        use_container_width=True,
+    )
 
 # -----------------------
 # DETAILS
