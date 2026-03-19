@@ -308,6 +308,14 @@ st.caption(
     "Online calculator (no Excel import)."
 )
 
+st.markdown("### Woodwork per pallet rough guide")
+st.markdown("""
+- End panels – 40 per pallet  
+- Liners – 220 per pallet  
+- 2800mm SSP packs – 40 per pallet  
+- 1400mm SSP packs – 80 per pallet
+""")
+
 # -----------------------
 # VEHICLE DEFINITIONS (computed from internal dimensions)
 # -----------------------
